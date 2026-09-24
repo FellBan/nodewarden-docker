@@ -4,41 +4,105 @@ on:
   push:
     branches: [main]
   schedule:
-    # 每 6 小时检查一次上游更新；上游一推，这里就重建并推送 latest
-    - cron: "0 */6 * * *"
-  workflow_dispatch: {}
+    # 每小时检测一次上游；上游没变就跳过构建（几乎零成本）
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "忽略比对，强制构建"
+        type: boolean
+        default: false
 
+# contents:write -> 提交 last-built.sha 回本仓库
+# packages:write -> 推镜像到 GHCR
 permissions:
-  contents: read
+  contents: write
+  packages: write
+
+concurrency:
+  group: nodewarden-build
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/fellban/nodewarden
+  # FlexVault：NodeWarden fork，自带原生 Node.js 自托管模式（无需 Miniflare / Cloudflare）
+  UPSTREAM: https://github.com/lj5645/FlexVault.git
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (本仓库，含 Dockerfile)
+      - name: Checkout 本仓库（含 Dockerfile 与 last-built.sha）
         uses: actions/checkout@v4
 
+      - name: 获取上游最新 commit
+        id: upstream
+        run: |
+          SHA=$(git ls-remote "$UPSTREAM" HEAD | awk '{print $1}')
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "上游最新 commit: $SHA"
+
+      - name: 读取上次已构建的 commit
+        id: last
+        run: |
+          if [ -f last-built.sha ]; then
+            echo "sha=$(cat last-built.sha)" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 判断是否需要构建
+        id: decide
+        run: |
+          FORCE="${{ github.event.inputs.force }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "强制构建"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.upstream.outputs.sha }}" = "${{ steps.last.outputs.sha }}" ]; then
+            echo "上游无变化（${{ steps.upstream.outputs.sha }}），跳过构建"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "上游有变化（last=${{ steps.last.outputs.sha }} -> new=${{ steps.upstream.outputs.sha }}），开始构建"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Docker Buildx
+        if: steps.decide.outputs.build == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
+        if: steps.decide.outputs.build == 'true'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Clone upstream NodeWarden (latest)
+      - name: 克隆上游最新代码并注入 Dockerfile
+        if: steps.decide.outputs.build == 'true'
         run: |
-          git clone --depth 1 https://github.com/shuaiplus/nodewarden.git src
-          cp Dockerfile src/Dockerfile
-          cp docker-entrypoint.sh src/docker-entrypoint.sh
-          cp .dockerignore src/.dockerignore
+          git clone --depth 1 "$UPSTREAM" src
+          cp Dockerfile docker-entrypoint.sh .dockerignore src/
 
-      - name: Build and push
+      - name: 构建并推送镜像到 GHCR
+        if: steps.decide.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: src
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/nodewarden:latest
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:sha-${{ steps.upstream.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: 记录本次构建 commit 并提交回仓库
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          echo "${{ steps.upstream.outputs.sha }}" > last-built.sha
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add last-built.sha
+          git commit -m "chore: built FlexVault (nodewarden) at ${{ steps.upstream.outputs.sha }}"
+          git push
