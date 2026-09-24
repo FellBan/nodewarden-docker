@@ -1,0 +1,44 @@
+name: Build & Push NodeWarden image
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 每 6 小时检查一次上游更新；上游一推，这里就重建并推送 latest
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (本仓库，含 Dockerfile)
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Clone upstream NodeWarden (latest)
+        run: |
+          git clone --depth 1 https://github.com/shuaiplus/nodewarden.git src
+          cp Dockerfile src/Dockerfile
+          cp docker-entrypoint.sh src/docker-entrypoint.sh
+          cp .dockerignore src/.dockerignore
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/nodewarden:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

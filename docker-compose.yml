@@ -1,0 +1,37 @@
+services:
+  nodewarden:
+    image: ${DOCKERHUB_USERNAME:-your_dockerhub_username}/nodewarden:latest
+    container_name: nodewarden
+    restart: unless-stopped
+    ports:
+      - "${NW_PORT:-8787}:8787"
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      HIDE_WEB_VAULT: ${HIDE_WEB_VAULT:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - nw-data:/data
+    labels:
+      # 只允许 Watchtower 更新带此标签的容器
+      - "com.centurylinklabs.watchtower.enable=true"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8787,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 --label-enable --cleanup
+    environment:
+      WATCHTOWER_MONITOR_ONLY: "false"
+      # 可选通知：在 .env 里加 WATCHTOWER_NOTIFICATIONS=gotify 等，详见 Watchtower 文档
+      WATCHTOWER_NOTIFICATIONS: ${WATCHTOWER_NOTIFICATIONS:-}
+
+volumes:
+  nw-data:
