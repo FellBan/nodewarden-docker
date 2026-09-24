@@ -30,4 +30,4 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["npx", "tsx", "--loader", "src/selfhosted/cloudflare-workers-loader.mjs", "src/selfhosted/index.ts"]
+CMD ["npx", "tsx", "--import", "data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"./src/selfhosted/cloudflare-workers-loader.mjs\", pathToFileURL(\"./\"));", "src/selfhosted/index.ts"]

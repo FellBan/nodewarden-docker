@@ -15,4 +15,6 @@ if [ -z "$JWT_SECRET" ]; then
 fi
 
 echo "FlexVault (NodeWarden 自托管) 启动中 -> 0.0.0.0:${PORT:-3000}"
-exec npx tsx --loader src/selfhosted/cloudflare-workers-loader.mjs src/selfhosted/index.ts
+exec npx tsx \
+  --import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./src/selfhosted/cloudflare-workers-loader.mjs", pathToFileURL("./"));' \
+  src/selfhosted/index.ts
