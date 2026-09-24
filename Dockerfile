@@ -47,6 +47,24 @@ console.log("patched env.ts");
 '
 EOF
 
+# 修复域名+HTTPS 反代下注册报 "Forbidden origin"：
+# router-public.ts 的 isSameOriginWriteRequest 要求浏览器 Origin === 服务端请求 origin。
+# 反代后浏览器 Origin 是 https://域名，后端收到的是 http://域名（协议不一致）-> 拒绝。
+# 兜底：主机名(含端口)一致即放行，忽略 http/https 差异。
+RUN <<'EOF'
+node -e '
+const fs=require("fs");
+const f="src/router-public.ts";
+let s=fs.readFileSync(f,"utf8");
+const old="  const origin = request.headers.get(\x27Origin\x27);\n  if (origin) {\n    return origin === targetOrigin;\n  }";
+const neu="  const origin = request.headers.get(\x27Origin\x27);\n  if (origin) {\n    if (origin === targetOrigin) return true;\n    try {\n      const o = new URL(origin);\n      const t = new URL(targetOrigin);\n      if (o.host === t.host) return true;\n    } catch {}\n    return false;\n  }";
+if(!s.includes(old)){console.error("PATCH FAILED: target block not found in "+f);process.exit(1);}
+s=s.replace(old,neu);
+fs.writeFileSync(f,s);
+console.log("patched router-public.ts");
+'
+EOF
+
 # 拷贝前端构建产物
 COPY --from=builder /build/dist ./webapp-dist
 
