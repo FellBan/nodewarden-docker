@@ -67,6 +67,10 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set up QEMU（用于构建 arm64 等非原生架构）
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         if: steps.decide.outputs.build == 'true'
         uses: docker/setup-buildx-action@v3
@@ -91,6 +95,8 @@ jobs:
         with:
           context: src
           push: true
+          # 同时构建 amd64 与 arm64，覆盖 x86 服务器与 ARM 设备（如树莓派）
+          platforms: linux/amd64,linux/arm64
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:sha-${{ steps.upstream.outputs.short }}
