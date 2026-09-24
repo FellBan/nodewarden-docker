@@ -29,6 +29,24 @@ COPY src ./src
 COPY shared ./shared
 COPY migrations ./migrations
 
+# 修复 FlexVault 自托管在原生 Node 22 下的 bug：
+# ASSETS.fetch 收到 Request 对象时，env.ts 走到 `new URL(input.toString())`，
+# 而 Request.toString() === "[object Request]" 导致 ERR_INVALID_URL。
+# 改为：Request 实例直接用 input.url。
+RUN <<'EOF'
+node -e '
+const fs=require("fs");
+const f="src/selfhosted/env.ts";
+let s=fs.readFileSync(f,"utf8");
+const old="const url = typeof input === \x27string\x27 ? new URL(input, \x27http://localhost\x27) : new URL(input.toString());";
+const neu="const url = input instanceof Request ? new URL(input.url) : typeof input === \x27string\x27 ? new URL(input, \x27http://localhost\x27) : new URL(input.toString());";
+if(!s.includes(old)){console.error("PATCH FAILED: target line not found in "+f);process.exit(1);}
+s=s.replace(old,neu);
+fs.writeFileSync(f,s);
+console.log("patched env.ts");
+'
+EOF
+
 # 拷贝前端构建产物
 COPY --from=builder /build/dist ./webapp-dist
 
